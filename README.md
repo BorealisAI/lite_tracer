@@ -30,7 +30,7 @@ args = parser.parse_args()
 result_path = './results/{}/{}'.format(args.data_name, args.hash_code)
 ```
 
-3) Never manually change output filenames (e.g. use generated filenames directly in your latex source code)
+NEVER manually change output filenames (e.g. use generated filenames directly in your latex source code)
 
 ## Given hash code, to trace back to the exact configuration that produced a result:
 By default, LTParser saves tracking information to ./lt_records/<args.hash_code>, which has three things:
