@@ -1,4 +1,4 @@
-![lite_tracer Logo](https://bitbucket.org/rbcmllab/lite_tracer/src/master/logos/Litetracer-Logo-Full-LB.png)
+![lite_tracer Logo](https://github.com/BorealisAI/lite_tracer/blob/master/logos/Litetracer-Logo-Full-LB.png)
 
 --------------------------------------------------------------------------------
 
