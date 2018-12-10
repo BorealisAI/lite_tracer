@@ -12,7 +12,7 @@ The identifiers are unique based on the combination of four factors:
 3) untracked files in the project;
 3) any command line arguments supplied at runtime.
 
-As the name suggests, LiteTracer is desinged to be as lightweight as possible. It is a minimalistic toolset and convention to enable reproducible experimental research, rather than a framework that one has to learn about. 
+As the name suggests, LiteTracer is designed to be as lightweight as possible. It is a minimalistic toolset and convention to enable reproducible experimental research, rather than a framework that one has to learn about. 
 
 ## To track:
 
