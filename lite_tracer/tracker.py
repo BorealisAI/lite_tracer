@@ -43,14 +43,22 @@ def args2str(args_parse_obj, filter_keys=None, searchable=True):
     cmd_items = [(k, v) for k, v in vars(args_parse_obj).items()
                  if k not in filter_keys]
 
-    cmd_items = sorted(cmd_items,  key=lambda x: x[0])
+    cmd_items = sorted(cmd_items, key=lambda x: x[0])
 
     if searchable:
-        cmd_items = [u'{}:{}'.format(k, v) for k, v in cmd_items]
+        cmd_str = [u'{}:{}'.format(k, v) for k, v in cmd_items]
     else:
-        cmd_items = [u'--{} {}'.format(k, v) for k, v in cmd_items]
+        cmd_str = [get_cmd_str(k, v) for k, v in cmd_items]
 
-    return u' '.join(cmd_items)
+    return u' '.join(cmd_str)
+
+
+def get_cmd_str(k, v, str_format=u'--{} {}'):
+    if isinstance(v, list):
+        arg_list = ' '.join([str(s) for s in v])
+        return str_format.format(k, arg_list)
+    else:
+        return str_format.format(k, v)
 
 
 def hashm2str(m, short=True):
@@ -103,10 +111,13 @@ class LTParser(ArgumentParser):
         setting_fname = pjoin(args.record_path,
                               'settings_{}'.format(args.hash_code))
 
-        with open(setting_fname+'.txt', 'w') as wr:
+        self.searchable_file = setting_fname + '_searchable.txt'
+        self.args_file = setting_fname + '.txt'
+
+        with open(self.args_file, 'w') as wr:
             wr.write(args2str(args, searchable=False))
 
-        with open(setting_fname+'_searchable.txt', 'w') as wr:
+        with open(self.searchable_file, 'w') as wr:
             wr.write(args2str(args, searchable=True))
 
         return args
