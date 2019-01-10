@@ -12,44 +12,35 @@ import glob
 import os
 import sys
 import argparse
-from lite_tracer.tracker import u2b, b2u
 import time
 import re
-import pdb
 
+import lite_tracer.exceptions as exception
 
-def u2bs(strs):
-    return [u2b(s) for s in strs]
-
-
-def b2us(strs):
-    return [b2u(s) for s in strs]
-
-
-class Item(object):
-
-    def __init__(self, line):
+class Parsed(object):
+    def __init__(self, file_path, line):
         self.line = line
 
-        self.file_name = line.split(u2b(".txt:"))[0] + u2b(".txt")
-        self.ctime = os.path.getctime(b2u(self.file_name))
-        self.end_str = u2b(".txt:")
-        self.start_str = u2b("settings_")
+        self.file_name = file_path
+        self.ctime = os.path.getctime(self.file_name)
+        self.end_str = ".txt"
+        self.start_str = "settings_"
 
-        self.hash_str = line.split(self.end_str)[0].split(self.start_str)[-1]
-        self.param_str = line.split(self.end_str)[-1]
+        hash_str_regex = re.compile('(?<=settings_)LT.*LT(?=.txt)')
+        self.hash_str = re.search(hash_str_regex, file_path).group(0)
+        self.line = line
 
-        tmp = [self._param_extraction(x) for x in
-               self._param_split(self.param_str)]
+        tmp = [self._param_extraction(x)
+               for x in self._param_split(self.line)]
         self.kwargs = dict([tuple(kv) for kv in tmp])
 
     def _param_extraction(self, split_param_str):
-        split_param_str = self._clean_params(b2u(split_param_str))
+        split_param_str = self._clean_params(split_param_str)
         split = split_param_str.split(' ')
         key = split[0].replace('--', '')
         values = split[1:]
 
-        return u2b(key), u2bs(values)
+        return key, values
 
     # Needed for backward compatibility, fixed version does not need it
     # May cause problems with adding text notes
@@ -62,8 +53,21 @@ class Item(object):
 
     def _param_split(self, raw_param_str):
         param_split = re.compile('--[a-zA-Z].*?(?= --[a-zA-Z]|$)')
-        split_param_strs = re.findall(param_split, b2u(raw_param_str))
-        return u2bs(split_param_strs)
+        split_param_strs = re.findall(param_split, raw_param_str)
+        return split_param_strs
+
+
+class FindDefault(object):
+    def __init__(self):
+        self.non_defaults = set()
+        self.values = dict()
+
+    def add(self, params):
+        changed = [k for k, v in params.items()
+                   if self.values.setdefault(k, v) != v]
+
+        if len(changed):
+            self.non_defaults |= set(changed)
 
 
 def main():
@@ -78,96 +82,123 @@ def main():
 
     args = parser.parse_args()
 
-    # search results
     setting_file_list = [f for f in glob.glob(os.path.expanduser(
                          os.path.join(args.lt_dir, "LT*LT/settings*.txt")))
                          if 'searchable' not in f]
 
-    if not len(setting_file_list):
-        print('No match found')
-        sys.exit()
+    if not setting_file_list:
+        raise exception.NoHistory
 
-    def get_param_name(tags):
-        return [t.split(':')[0] for t in tags]
+    include_params = get_param_value(args.include) if args.include else dict()
+    exclude_params = get_param_value(args.exclude) if args.exclude else dict()
 
-    def get_param_values(tags):
-        return [t.split(':')[1] for t in tags
-                if ':' in t]
+    if include_params is None and exclude_params is None:
+        raise exception.NoParameterError
 
-    setting_files = ' '.join(setting_file_list)
-    include_tags = get_param_name(args.include) if args.include else []
-    exclude_tags = get_param_name(args.exclude) if args.exclude else []
+    results = list()
+    defaults = FindDefault()
 
-    include_values = get_param_values(args.include) if args.include else []
-    exclude_values = get_param_values(args.exclude) if args.exclude else []
+    # Loop through all files and find include and exclude
+    for file_path in setting_file_list:
+        with open(file_path, 'r') as f:
+            line = f.readline()
 
-    icommand = "grep -E '{}' {}".format('|'.join(include_tags), setting_files)
+            parsed = Parsed(file_path, line)
+            params = parsed.kwargs
+            defaults.add(params)
 
-    # TODO: figure out why the non shell version fails so can avoid shell=True
-    try:
-        if exclude_tags and len(exclude_values) == 0:
-            ecommand = "grep -v -E '{}'".format('|'.join(exclude_tags))
+            i_search_result = include_search(params, include_params)
+            e_search_result = exclude_search(params, exclude_params)
 
-            # ips = subprocess.Popen(icommand, stdout=subprocess.PIPE)
-            # lines = subprocess.check_output(ecommand, stdin=ips.stdout)
-            # ips.wait()
+            if i_search_result and not e_search_result:
+                results.append(parsed)
 
-            command = '{} | {}'.format(icommand, ecommand)
-            lines = subprocess.check_output(command, shell=True)
-        else:
-            lines = subprocess.check_output(icommand, shell=True)
-
-    except subprocess.CalledProcessError as e:
-        print('No match, Check the parameter name')
-        sys.exit()
-
-    # process results
-    lines = lines.split(u2b("\n"))
-
-    if len(setting_file_list) == 1:
-        lines[0] = u2b(setting_file_list[0]) + u2b(':') + lines[0]
-
-    results = [Item(line) for line in lines if line]
-
-    all_keys = set([])
-    for item in results:
-        all_keys.update(item.kwargs.keys())
-
-    diff_dict = {key: False for key in all_keys}
-
-    # Find out if the parameter value has changed,
-    # if it hasn't it's a constant and we don't care
-    # TODO: Make this information more transparent on the docs
-    #       possibley add a --full option
-    for key in diff_dict:
-        for ind in range(1, len(results)):
-            if results[ind].kwargs.setdefault(key, u2b('')) != \
-                    results[ind - 1].kwargs.setdefault(key, u2b('')):
-                diff_dict[key] = True
-                break
-
-    if len(exclude_values):
-        excluded_results = set()
-        for key, value in zip(u2bs(exclude_tags), u2bs(exclude_values)):
-            r = [r for r in results if value in r.kwargs.get(key, [])]
-            excluded_results.update(r)
-        results = list(set(results) - set(excluded_results))
-
-    if len(include_values):
-        included_results = set()
-        for key, value in zip(u2bs(include_tags), u2bs(include_values)):
-            r = [r for r in results if value in r.kwargs.get(key, [])]
-            included_results.update(r)
-        results = list(included_results)
+    if len(results) == 0:
+        raise exception.NoMatchError
 
     results = sorted(results, key=lambda x: x.ctime)
 
     for item in results:
-        print(b2u(item.hash_str) + "\t" + time.ctime(item.ctime) + "\t" +
-              ' '.join([b2u(k) + ':' + b2u(b','.join(item.kwargs[k]))
+        print(item.hash_str + "\t" + time.ctime(item.ctime) + "\t" +
+              ' '.join([k + ':' + ','.join(item.kwargs[k])
                         for k in sorted(item.kwargs.keys())
-                        if diff_dict.setdefault(k, u2b(''))]))
+                        if k in defaults.non_defaults]))
+
+
+def include_search(params, include_params):
+    # True if include term is found
+    if include_params is None:
+        return True
+
+    params_keys = set(list(params.keys()))
+    include_keys = set(include_params.keys())
+
+    if not include_keys.issubset(params_keys):
+        return False
+    else:
+        return all([match(params, k, v) for k, v in include_params.items()])
+
+def exclude_search(params, exclude_params):
+    # True if exclude term is found
+    if exclude_params is None:
+        return False
+
+    params_keys = set(list(params.keys()))
+    exclude_keys = set(exclude_params.keys())
+
+    if exclude_keys.isdisjoint(params_keys):
+        return False
+    else:
+        return any([match(params, k, v, True) for k, v in exclude_params.items()])
+
+
+def get_param_value(tags):
+    param_value = dict()
+    for t in tags:
+        t_v = t.split(':')
+        if len(t_v) > 1:
+            value = [':'.join(t_v[1:])]
+            if param_value.get(t_v[0], None):
+                param_value[t_v[0]].extend(value)
+            else:
+                param_value[t_v[0]] = value
+        else:
+            if param_value.setdefault(t_v[0], [None]):
+                param_value[t_v[0]].append(None)
+
+    return param_value
+
+
+def match(params, key, values, partial=False):
+    values_set = set(values)
+    params_set = set(params.get(key, [None]))
+
+    if key not in params.keys():
+        return False
+
+    if partial:
+        if None in values_set:
+            return True
+
+        joint_set = values_set & params_set
+        return not joint_set.isdisjoint(values_set)
+
+    if None in values_set:
+        values_set.remove(None)
+
+    joint_set = values_set & params_set
+    return joint_set == values_set
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except (exception.NoHistory, exception.NoMatchError, exception.NoParameterError) as e:
+        if isinstance(e, exception.NoHistory):
+            print("Error: There are no previous runs of this experiment")
+        elif isinstance(e, exception.NoParameterError):
+            print("Error: Parameters were not provided properly")
+        elif isinstance(e, exception.NoMatchError):
+            print("There were no match for the given Parameters")
+
+        sys.exit(1)
