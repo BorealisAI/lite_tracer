@@ -276,10 +276,9 @@ def search(sysv_dict, param_name, value):
             else:
                 stored = [search_dict[param_name]]
 
-            for s in stored:
-                results = [(path, param, value) for s in stored]
-                if value == str(s) or value is None:
-                    found.extend(results)
+            results = [(path, param, value) for s in stored
+                        if value == str(s) or value is None]
+            found.extend(results)
 
     return found
 
@@ -348,7 +347,6 @@ def test_search_parameter_value():
     exist_search = create_args_list(args_dict)
 
     dne_search = generate_dne_args(dne_list_args, cast=float)
-    dne_search |= generate_dne_args(dne_single_args, cast=float)
     dne_search |= generate_dne_args(list_args, cast=float)
 
     all_search  = exist_search | dne_search
@@ -445,7 +443,7 @@ def test_search_parameter_value():
 
 
 @pytest.mark.usefixtures("cleandir")
-def test_search_parameter_value():
+def test_search_parameter_and_parameter_value():
     n_history = 20
 
     sysv_dict = dict()
