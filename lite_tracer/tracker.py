@@ -87,7 +87,7 @@ class LTParser(ArgumentParser):
         try:
             git_label = self._shell_output(["git", "describe", "--always"])
         except RuntimeError:
-            raise exception.GitError()
+            raise exception.GitError
 
         hash_code = args2hash(args, short=self.short_hash)
         setattr(args, GIT_FIELD, git_label)
@@ -112,8 +112,7 @@ class LTParser(ArgumentParser):
 
         return files, folders
 
-    @staticmethod
-    def _folder_error_msg(folders):
+    def _folder_error_msg(self, folders):
         folder_str = ', '.join(folders)
         msg = ("{} are folders not checked in. "
                "Consider adding it to .gitignore or git add".format(folder_str))
@@ -133,7 +132,7 @@ class LTParser(ArgumentParser):
             git_diff = self._shell_output(['git', 'diff'])
             git_untracked = self._shell_output(["git", "status", "-s"])
         except RuntimeError:
-            raise exception.GitError()
+            raise exception.GitError
 
         untracked_regex = re.compile('(?<=\?\? )(?!\.).*')
         untracked_files = re.findall(untracked_regex, git_untracked)
