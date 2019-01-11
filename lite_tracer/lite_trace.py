@@ -52,7 +52,7 @@ class Parsed(object):
         return params
 
     def _param_split(self, raw_param_str):
-        param_split = re.compile('--[a-zA-Z].*?(?= --[a-zA-Z]|$)')
+        param_split = re.compile('-[a-zA-Z].*?(?= --[a-zA-Z]|$)')
         split_param_strs = re.findall(param_split, raw_param_str)
         return split_param_strs
 

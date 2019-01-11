@@ -51,8 +51,13 @@ def add_single_option(parser):
     parser.add_argument('-a', default=1.0,
                         help='single option testing')
 
+def add_single_double_option(parser):
+    parser.add_argument('-s', '--single',default=1.0,
+                        help='single option testing')
+    parser.add_argument('-t', '--triple',default=1.0,
+                        help='single option testing')
 
-def add_boolean_arguments(parser):
+def add_boolean_option(parser):
     parser.add_argument('-b', default=False, action='store_true',
                         help='testing boolean')
     parser.add_argument('--boolean', default=False, action='store_true',
