@@ -12,6 +12,9 @@ import subprocess
 import shutil
 import os
 import sys
+import re
+
+import lite_tracer.exceptions as exception
 
 
 pjoin = os.path.join
@@ -20,20 +23,14 @@ _BASE_HASH_FIELD = 'base_hash_code'
 HASH_FIELD = 'hash_code'
 GIT_FIELD = 'git_label'
 
-if six.PY3:
-    def u2b(u):
-        return u.encode('utf-8')
 
-    def b2u(b):
-        return b.decode('utf-8')
-
-else:
-    def u2b(x): return x
-
-    def b2u(x): return x
-
-
-def args2str(args_parse_obj, filter_keys=None, searchable=True):
+def args2str(args_parse_obj, filter_keys=None):
+    def get_cmd_str(k, v, str_format=u'--{} {}'):
+        if isinstance(v, list):
+            arg_list = ' '.join([str(s) for s in v])
+            return str_format.format(k, arg_list)
+        else:
+            return str_format.format(k, v)
 
     if filter_keys is None:
         filter_keys = [HASH_FIELD,
@@ -43,14 +40,10 @@ def args2str(args_parse_obj, filter_keys=None, searchable=True):
     cmd_items = [(k, v) for k, v in vars(args_parse_obj).items()
                  if k not in filter_keys]
 
-    cmd_items = sorted(cmd_items,  key=lambda x: x[0])
+    cmd_items = sorted(cmd_items, key=lambda x: x[0])
+    cmd_str = [get_cmd_str(k, v) for k, v in cmd_items]
 
-    if searchable:
-        cmd_items = [u'{}:{}'.format(k, v) for k, v in cmd_items]
-    else:
-        cmd_items = [u'--{} {}'.format(k, v) for k, v in cmd_items]
-
-    return u' '.join(cmd_items)
+    return u' '.join(cmd_str)
 
 
 def hashm2str(m, short=True):
@@ -65,7 +58,9 @@ def hashm2str(m, short=True):
 
 def hash_str(args_str, short=True):
     m = hashlib.md5()
-    m.update(u2b(args_str))
+    args_str = args_str.encode('utf-8')
+    m.update(args_str)
+
     return hashm2str(m, short)
 
 
@@ -74,7 +69,6 @@ def args2hash(args_parse_obj, short=True):
 
 
 class LTParser(ArgumentParser):
-
     def __init__(self, **kwargs):
         lt_record_dir = kwargs.pop('record_dir', 'lt_records')
         self.lt_record_dir = lt_record_dir
@@ -89,10 +83,11 @@ class LTParser(ArgumentParser):
 
     def parse_args(self, args=None, namespace=None):
         args = super(LTParser, self).parse_args(args, namespace)
-        git_label = subprocess.check_output(
-            ["git", "describe", "--always"]).strip()
 
-        git_label = b2u(git_label)
+        try:
+            git_label = self._shell_output(["git", "describe", "--always"])
+        except RuntimeError:
+            raise exception.GitError()
 
         hash_code = args2hash(args, short=self.short_hash)
         setattr(args, GIT_FIELD, git_label)
@@ -102,51 +97,59 @@ class LTParser(ArgumentParser):
 
         setting_fname = pjoin(args.record_path,
                               'settings_{}'.format(args.hash_code))
+        self.args_file = setting_fname + '.txt'
 
-        with open(setting_fname+'.txt', 'w') as wr:
-            wr.write(args2str(args, searchable=False))
-
-        with open(setting_fname+'_searchable.txt', 'w') as wr:
-            wr.write(args2str(args, searchable=True))
+        with open(self.args_file, 'w') as wr:
+            wr.write(args2str(args))
 
         return args
 
+    @staticmethod
+    def _sort_file_n_folders(paths):
+        folders = {p for p in paths
+                   if os.path.isdir(p)}
+        files = set(paths) - folders
+
+        return files, folders
+
+    @staticmethod
+    def _folder_error_msg(folders):
+        folder_str = ', '.join(folders)
+        msg = ("{} are folders not checked in. "
+               "Consider adding it to .gitignore or git add".format(folder_str))
+
+        if self.on_suspicion == 'warn':
+            import warnings
+            warnings.warn(msg + " Will backup the folder for now.")
+        elif self.on_suspicion == 'error':
+            raise ValueError(msg)
+        elif self.on_suspicion == 'ignore':
+            pass
+        else:
+            raise ValueError('on_suspicion needs to be [warn/error/ignore]')
+
     def _handle_unclean(self, args):
-        git_diff = subprocess.check_output(["git", "diff"])
-        git_untracked = subprocess.check_output(["git", "status", "-s"])
+        try:
+            git_diff = self._shell_output(['git', 'diff'])
+            git_untracked = self._shell_output(["git", "status", "-s"])
+        except RuntimeError:
+            raise exception.GitError()
 
-        mark = u2b("??")
-        linesep = u2b(os.linesep)
-
-        git_untracked = [uf for uf in git_untracked.strip().split(linesep)
-                         if (mark in uf and u2b(self.lt_record_dir) not in uf)]
-
-        untracked_files = [x.split(mark)[1].strip() for x in git_untracked]
-        untracked_files = [
-            x for x in untracked_files if not x.startswith(u2b('.'))]
+        untracked_regex = re.compile('(?<=\?\? )(?!\.).*')
+        untracked_files = re.findall(untracked_regex, git_untracked)
 
         m = hashlib.md5()
-        m.update(git_diff)
+        m.update(git_diff.encode('utf-8'))
 
-        for uf in untracked_files:
-            if os.path.isdir(uf):
-                msg = ("untracked {} is a folder. "
-                       "Consider .gitignore it or commit".format(
-                           b2u(uf)))
-                if self.on_suspicion == 'warn':
-                    import warnings
-                    warnings.warn(msg + " Will backup the folder for now.")
-                elif self.on_suspicion == 'error':
-                    raise ValueError(msg)
-                elif self.on_suspicion == 'ignore':
-                    pass
-                else:
-                    raise ValueError(
-                        'on_suspicion needs to be [warn/error/ignore]')
-            else:
-                with open(uf, 'rb') as fr:
-                    content = fr.read()
-                    m.update(content)
+        files, folders = self._sort_file_n_folders(untracked_files)
+
+        if folders:
+            self._folder_error_msg(folders)
+
+        for p in files:
+            with open(p, 'rb') as fr:
+                content = fr.read()
+                m.update(content)
 
         unclean_hash = hashm2str(m, self.short_hash)
         base_hash_code = getattr(args, _BASE_HASH_FIELD)
@@ -179,7 +182,7 @@ class LTParser(ArgumentParser):
 
         # save unclearn data in lt folder
         with open(pjoin(record_path, 'diff.patch'), 'w') as wr:
-            wr.write(b2u(git_diff))
+            wr.write(git_diff)
 
         untracked_record_dir = pjoin(record_path, 'untracked')
 
@@ -187,18 +190,26 @@ class LTParser(ArgumentParser):
             os.makedirs(untracked_record_dir)
 
         for uf in untracked_files:
-            uf = b2u(uf)
-
             if os.path.isdir(uf):
-
                 dst_path = pjoin(untracked_record_dir,
                                  os.path.basename(uf.rstrip(os.path.sep)))
 
                 if os.path.exists(dst_path):
                     shutil.rmtree(dst_path)
 
-                shutil.copytree(uf,  dst_path)
+                shutil.copytree(uf, dst_path)
             else:
                 shutil.copy(uf, untracked_record_dir)
 
         return args
+
+    @staticmethod
+    def _shell_output(cmd):
+        try:
+            newline_regex = re.compile("[\n\r]$")
+            output = subprocess.check_output(cmd).decode('utf-8')
+            return re.sub(newline_regex, '', output)
+
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError("Error in the process that was called")
+
