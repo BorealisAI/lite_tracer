@@ -13,6 +13,7 @@ import shutil
 import os
 import sys
 import re
+import pdb
 
 import lite_tracer.exceptions as exception
 
@@ -23,51 +24,6 @@ _BASE_HASH_FIELD = 'base_hash_code'
 HASH_FIELD = 'hash_code'
 GIT_FIELD = 'git_label'
 
-
-def args2str(args_parse_obj, filter_keys=None):
-    def get_cmd_str(k, v, str_format=u'--{} {}'):
-        if isinstance(v, list):
-            arg_list = ' '.join([str(s) for s in v])
-            return str_format.format(k, arg_list)
-        else:
-            return str_format.format(k, v)
-
-    if filter_keys is None:
-        filter_keys = [HASH_FIELD,
-                       _BASE_HASH_FIELD,
-                       'record_path']
-
-    cmd_items = [(k, v) for k, v in vars(args_parse_obj).items()
-                 if k not in filter_keys]
-
-    cmd_items = sorted(cmd_items, key=lambda x: x[0])
-    cmd_str = [get_cmd_str(k, v) for k, v in cmd_items]
-
-    return u' '.join(cmd_str)
-
-
-def hashm2str(m, short=True):
-    hashcode = m.hexdigest()
-
-    if short:
-        from zlib import adler32
-        hashcode = hex(adler32(m.digest()))
-
-    return hashcode
-
-
-def hash_str(args_str, short=True):
-    m = hashlib.md5()
-    args_str = args_str.encode('utf-8')
-    m.update(args_str)
-
-    return hashm2str(m, short)
-
-
-def args2hash(args_parse_obj, short=True):
-    return hash_str(args2str(args_parse_obj), short)
-
-
 class LTParser(ArgumentParser):
     def __init__(self, **kwargs):
         lt_record_dir = kwargs.pop('record_dir', 'lt_records')
@@ -76,20 +32,26 @@ class LTParser(ArgumentParser):
         self.on_suspicion = kwargs.pop('on_suspicion', 'warn')
         self.short_hash = kwargs.pop('short_hash', True)
 
+        self.flag_params = None
+
         if not os.path.exists(lt_record_dir):
             os.makedirs(lt_record_dir)
 
         super(LTParser, self).__init__(**kwargs)
 
     def parse_args(self, args=None, namespace=None):
+        raw_input = sys.argv if args is None else args
         args = super(LTParser, self).parse_args(args, namespace)
+
+        self.flag_params = self.get_flag_param(raw_input)
+        self.single_params = self.get_single_letter_param(raw_input)
 
         try:
             git_label = self._shell_output(["git", "describe", "--always"])
         except RuntimeError:
             raise exception.GitError
 
-        hash_code = args2hash(args, short=self.short_hash)
+        hash_code = self.args2hash(args, short=self.short_hash)
         setattr(args, GIT_FIELD, git_label)
         setattr(args, _BASE_HASH_FIELD, hash_code)
 
@@ -100,9 +62,78 @@ class LTParser(ArgumentParser):
         self.args_file = setting_fname + '.txt'
 
         with open(self.args_file, 'w') as wr:
-            wr.write(args2str(args))
+            wr.write(self.args2str(args))
 
         return args
+
+    def args2str(self, args_parse_obj, filter_keys=None):
+        if filter_keys is None:
+            filter_keys = [HASH_FIELD,
+                        _BASE_HASH_FIELD,
+                        'record_path']
+
+        cmd_items = [(k, v) for k, v in vars(args_parse_obj).items()
+                    if k not in filter_keys]
+
+        cmd_items = sorted(cmd_items, key=lambda x: x[0])
+        cmd_str = self.process_cmd_str(cmd_items)
+
+        return ' '.join(cmd_str)
+
+    def process_cmd_str(self, cmd_items):
+        cmd_str = list()
+        cmd_items_regex = '^[-]{{1,2}}{}$'
+
+        def get_cmd_str(k, v, str_format='--{} {}'):
+            if isinstance(v, list):
+                arg_list = ' '.join([str(s) for s in v])
+                return str_format.format(k, arg_list)
+            else:
+                return str_format.format(k, v)
+
+        for k, v in cmd_items:
+            flag_param_match = [re.match(cmd_items_regex.format(k), fp)
+                                for fp in self.flag_params]
+            single_param_match = [re.match(cmd_items_regex.format(k), sp)
+                                  for sp in self.single_params]
+
+            flag_match = [m.group(0) for m in flag_param_match
+                          if m is not None]
+            single_match = [m.group(0) for m in single_param_match
+                            if m is not None]
+
+
+            if flag_match:
+                cmd_str.append(list(flag_match)[0])
+            elif single_match:
+                cmd_str.append(get_cmd_str(k, v, str_format='-{} {}'))
+            else:
+                cmd_str.append(get_cmd_str(k, v))
+
+        return cmd_str
+
+    @staticmethod
+    def get_flag_param(raw_input):
+        flag_param = dict()
+        param_regex = re.compile("^[-]{1,2}[a-zA-z]{1}.*$")
+
+        for r in raw_input:
+            if re.match(param_regex, r):
+                curr_param = r
+                flag_param[curr_param] = True
+            else:
+                flag_param[curr_param] = False
+
+        return [k for k, v in flag_param.items() if v]
+
+    def get_single_letter_param(self, raw_input):
+        param_regex = re.compile("^[-]{1}[a-zA-z]{1}$")
+        single_param = {r for r in raw_input if re.match(param_regex, r)}
+
+        if self.flag_params:
+            single_param -= single_param & set(self.flag_params)
+
+        return single_param
 
     @staticmethod
     def _sort_file_n_folders(paths):
@@ -150,7 +181,7 @@ class LTParser(ArgumentParser):
                 content = fr.read()
                 m.update(content)
 
-        unclean_hash = hashm2str(m, self.short_hash)
+        unclean_hash = self.hashm2str(m, self.short_hash)
         base_hash_code = getattr(args, _BASE_HASH_FIELD)
         setattr(args, HASH_FIELD, 'LT_delta-{}_base-{}_LT'.format(
             unclean_hash, base_hash_code))
@@ -175,7 +206,6 @@ class LTParser(ArgumentParser):
             else:
                 raise ValueError(
                     'on_suspicion needs to be [warn/error/ignore]')
-
         else:
             os.makedirs(record_path)
 
@@ -212,3 +242,22 @@ class LTParser(ArgumentParser):
         except subprocess.CalledProcessError as e:
             raise RuntimeError("Error in the process that was called")
 
+    @staticmethod
+    def hashm2str(m, short=True):
+        hashcode = m.hexdigest()
+
+        if short:
+            from zlib import adler32
+            hashcode = hex(adler32(m.digest()))
+
+        return hashcode
+
+    def hash_str(self, args_str, short=True):
+        m = hashlib.md5()
+        args_str = args_str.encode('utf-8')
+        m.update(args_str)
+
+        return self.hashm2str(m, short)
+
+    def args2hash(self, args_parse_obj, short=True):
+        return self.hash_str(self.args2str(args_parse_obj), short)
