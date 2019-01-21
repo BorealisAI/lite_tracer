@@ -14,6 +14,7 @@ import sys
 import argparse
 import time
 import re
+import pdb
 
 import lite_tracer.exceptions as exception
 
@@ -56,7 +57,6 @@ class Parsed(object):
         split_param_strs = re.findall(param_split, raw_param_str)
         return split_param_strs
 
-
 class FindDefault(object):
     def __init__(self):
         self.non_defaults = set()
@@ -68,7 +68,6 @@ class FindDefault(object):
 
         if len(changed):
             self.non_defaults |= set(changed)
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -87,16 +86,16 @@ def main():
                          if 'searchable' not in f]
 
     if not setting_file_list:
-        raise exception.NoHistory
+        raise exception.NoHistory()
 
-    include_params = get_param_value(args.include) if args.include else dict()
-    exclude_params = get_param_value(args.exclude) if args.exclude else dict()
+    include_search_params = get_param_value(args.include) if args.include else dict()
+    exclude_search_params = get_param_value(args.exclude) if args.exclude else dict()
 
-    if include_params is None and exclude_params is None:
-        raise exception.NoParameterError
+    if include_search_params is None and exclude_search_params is None:
+        raise exception.NoParameterError()
 
-    results = list()
-    defaults = FindDefault()
+    search_results = list()
+    param_default_checker = FindDefault()
 
     # Loop through all files and find include and exclude
     for file_path in setting_file_list:
@@ -104,90 +103,92 @@ def main():
             line = f.readline()
 
             parsed = Parsed(file_path, line)
-            params = parsed.kwargs
-            defaults.add(params)
+            parsed_params = parsed.kwargs
+            param_default_checker.add(parsed_params)
 
-            i_search_result = include_search(params, include_params)
-            e_search_result = exclude_search(params, exclude_params)
+            include_search_result = include_search(parsed_params, include_search_params)
+            exclude_search_result = exclude_search(parsed_params, exclude_search_params)
 
-            if i_search_result and not e_search_result:
-                results.append(parsed)
+            if include_search_result and not exclude_search_result:
+                search_results.append(parsed)
 
-    if len(results) == 0:
-        raise exception.NoMatchError
+    if len(search_results) == 0:
+        raise exception.NoMatchError()
 
-    results = sorted(results, key=lambda x: x.ctime)
+    search_results.sort(key=lambda x: x.ctime)
+    for r in search_results:
+        print(format_output(r, param_default_checker.non_defaults))
 
-    for item in results:
-        print(item.hash_str + "\t" + time.ctime(item.ctime) + "\t" +
-              ' '.join([k + ':' + ','.join(item.kwargs[k])
-                        for k in sorted(item.kwargs.keys())
-                        if k in defaults.non_defaults]))
+def format_output(result, non_defaults):
+    output_format = "{}\t{}\t{}"
+    kv_format = '{}:{}'
 
+    result_params = result.kwargs
+    ctime = time.ctime(result.ctime)
+    key_values = [kv_format.format(k, ','.join(result_params[k]))
+                  for k in sorted(result_params.keys())
+                  if k in non_defaults]
+    key_value_str = ' '.join(key_values)
 
-def include_search(params, include_params):
+    return output_format.format(result.hash_str, ctime, key_value_str)
+
+def include_search(stored_params, search_params):
     # True if include term is found
-    if include_params is None:
-        return True
 
-    params_keys = set(list(params.keys()))
-    include_keys = set(include_params.keys())
+    stored_param_keys = set(stored_params.keys())
+    search_param_keys = set(search_params.keys())
 
-    if not include_keys.issubset(params_keys):
+    if not search_param_keys.issubset(stored_param_keys):
         return False
     else:
-        return all([match(params, k, v) for k, v in include_params.items()])
+        return all([match(stored_params, k, v)
+                    for k, v in search_params.items()])
 
-def exclude_search(params, exclude_params):
-    # True if exclude term is found
-    if exclude_params is None:
-        return False
+def exclude_search(stored_params, search_params):
+    stored_param_keys = set(stored_params.keys())
+    search_param_keys = set(search_params.keys())
 
-    params_keys = set(list(params.keys()))
-    exclude_keys = set(exclude_params.keys())
-
-    if exclude_keys.isdisjoint(params_keys):
+    if search_param_keys.isdisjoint(stored_param_keys):
         return False
     else:
-        return any([match(params, k, v, True) for k, v in exclude_params.items()])
+        return any([match(stored_params, k, v, True)
+                    for k, v in search_params.items()])
 
-
-def get_param_value(tags):
+def get_param_value(input_param_values):
     param_value = dict()
-    for t in tags:
-        t_v = t.split(':')
-        if len(t_v) > 1:
-            value = [':'.join(t_v[1:])]
-            if param_value.get(t_v[0], None):
-                param_value[t_v[0]].extend(value)
-            else:
-                param_value[t_v[0]] = value
+    for pv in input_param_values:
+        p_v = pv.split(':')
+
+        if len(p_v) > 1:
+            value = [':'.join(p_v[1:])]
         else:
-            if param_value.setdefault(t_v[0], [None]):
-                param_value[t_v[0]].append(None)
+            value = [None]
+
+        if param_value.get(p_v[0], None):
+            param_value[p_v[0]].extend(value)
+        else:
+            param_value[p_v[0]] = value
 
     return param_value
 
+def match(stored_params, search_key, search_values, partial_search=False):
+    search_values = set(search_values)
+    stored_values = set(stored_params.get(search_key, [None]))
 
-def match(params, key, values, partial=False):
-    values_set = set(values)
-    params_set = set(params.get(key, [None]))
-
-    if key not in params.keys():
+    if search_key not in stored_params.keys():
         return False
 
-    if partial:
-        if None in values_set:
+    # key exists in params and look for partial or full match
+    if partial_search:
+        if None in search_values:
             return True
 
-        joint_set = values_set & params_set
-        return not joint_set.isdisjoint(values_set)
+        return bool(search_values & stored_values)
+    else:
+        if None in search_values:
+            search_values.remove(None)
 
-    if None in values_set:
-        values_set.remove(None)
-
-    joint_set = values_set & params_set
-    return joint_set == values_set
+        return search_values.issubset(stored_values)
 
 
 if __name__ == '__main__':

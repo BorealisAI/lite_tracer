@@ -67,7 +67,12 @@ def add_boolean_option(parser):
 def add_different_destination(parser):
     parser.add_argument('--diff_var', dest='dvar', type=float, default=1.0,
                         help='diff destination testing')
-
+    parser.add_argument('-z', dest='dvar_short', type=float, default=1.0,
+                        help='diff destination testing')
+    parser.add_argument('-r', '--diff_var_both', dest='dvar_both', type=float, default=1.0,
+                        help='diff destination testing')
+    parser.add_argument('-q', '--diff_var_long', dest='dvar_long', type=float, default=1.0,
+                        help='diff destination testing')
 
 def random_generate_sysv(list_params=True):
     ul = 200

@@ -14,11 +14,9 @@ import os
 import sys
 import re
 import pdb
+from os.path import join as pjoin
 
 import lite_tracer.exceptions as exception
-
-
-pjoin = os.path.join
 
 _BASE_HASH_FIELD = 'base_hash_code'
 HASH_FIELD = 'hash_code'
@@ -43,13 +41,14 @@ class LTParser(ArgumentParser):
         raw_input = sys.argv if args is None else args
         args = super(LTParser, self).parse_args(args, namespace)
 
+        # Find if there are any flag parameters or single character parameter names
         self.flag_params = self.get_flag_param(raw_input)
-        self.single_params = self.get_single_letter_param(raw_input)
+        self.single_letter_params = self.get_single_letter_param(raw_input)
 
         try:
             git_label = self._shell_output(["git", "describe", "--always"])
         except RuntimeError:
-            raise exception.GitError
+            raise exception.GitError()
 
         hash_code = self.args2hash(args, short=self.short_hash)
         setattr(args, GIT_FIELD, git_label)
@@ -65,6 +64,12 @@ class LTParser(ArgumentParser):
             wr.write(self.args2str(args))
 
         return args
+
+    def add_argument(self, *args, **kwargs):
+        if 'dest' in kwargs:
+            raise exception.DestArgumentNotSuppported()
+
+        super(LTParser, self).add_argument(*args, **kwargs)
 
     def args2str(self, args_parse_obj, filter_keys=None):
         if filter_keys is None:
@@ -92,16 +97,15 @@ class LTParser(ArgumentParser):
                 return str_format.format(k, v)
 
         for k, v in cmd_items:
-            flag_param_match = [re.match(cmd_items_regex.format(k), fp)
-                                for fp in self.flag_params]
-            single_param_match = [re.match(cmd_items_regex.format(k), sp)
-                                  for sp in self.single_params]
+            flag_param_match = (re.match(cmd_items_regex.format(k), fp)
+                                for fp in self.flag_params)
+            single_param_match = (re.match(cmd_items_regex.format(k), sp)
+                                  for sp in self.single_letter_params)
 
             flag_match = [m.group(0) for m in flag_param_match
                           if m is not None]
             single_match = [m.group(0) for m in single_param_match
                             if m is not None]
-
 
             if flag_match:
                 cmd_str.append(list(flag_match)[0])
@@ -163,7 +167,7 @@ class LTParser(ArgumentParser):
             git_diff = self._shell_output(['git', 'diff'])
             git_untracked = self._shell_output(["git", "status", "-s"])
         except RuntimeError:
-            raise exception.GitError
+            raise exception.GitError()
 
         untracked_regex = re.compile('(?<=\?\? )(?!\.).*')
         untracked_files = re.findall(untracked_regex, git_untracked)
@@ -176,6 +180,7 @@ class LTParser(ArgumentParser):
         if folders:
             self._folder_error_msg(folders)
 
+        # update hash
         for p in files:
             with open(p, 'rb') as fr:
                 content = fr.read()
@@ -184,13 +189,10 @@ class LTParser(ArgumentParser):
         unclean_hash = self.hashm2str(m, self.short_hash)
         base_hash_code = getattr(args, _BASE_HASH_FIELD)
         setattr(args, HASH_FIELD, 'LT_delta-{}_base-{}_LT'.format(
-            unclean_hash, base_hash_code))
+                unclean_hash, base_hash_code))
         hash_code = getattr(args, HASH_FIELD)
 
-        # we have the unique identifier now in hash_code
-
-        record_path = pjoin(
-            self.lt_record_dir, getattr(args, HASH_FIELD))
+        record_path = pjoin(self.lt_record_dir, getattr(args, HASH_FIELD))
 
         args.record_path = record_path
 
@@ -209,7 +211,7 @@ class LTParser(ArgumentParser):
         else:
             os.makedirs(record_path)
 
-        # save unclearn data in lt folder
+        # save unclean data in lt folder
         with open(pjoin(record_path, 'diff.patch'), 'w') as wr:
             wr.write(git_diff)
 
