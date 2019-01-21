@@ -6,9 +6,9 @@ class ShellError(RuntimeError):
 
 class GitError(RuntimeError):
     """Might not be a git repository or git is not installed"""
-    def __init__(self, message, errors):
+    def __init__(self, message=None, errors=None):
         self.message = "git may not be configured properly"
-        super(RuntimeError, self).__init__(message)
+        super(GitError, self).__init__(message)
         self.errors = errors
 
 class NoMatchError(RuntimeError):
@@ -16,3 +16,10 @@ class NoMatchError(RuntimeError):
 
 class NoParameterError(RuntimeError):
     """There are no match for the given parameters"""
+
+class DestArgumentNotSuppported(RuntimeError):
+    """There are no match for the given parameters"""
+    def __init__(self, message=None, errors=None):
+        self.message = "dest argument for argparser is not supported"
+        super(DestArgumentNotSuppported, self).__init__(message)
+        self.errors = errors
