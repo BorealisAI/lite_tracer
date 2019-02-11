@@ -8,16 +8,18 @@ import pdb
 import pytest
 
 from lite_tracer import LTParser
-import test_search
-import test_flags
-from test_search import cleandir
+
+import helper
+from helper import cleandir
+
 
 def tracer():
-    tracer = test_search.get_tracer()
-    test_search.add_lists_option(tracer)
-    test_search.add_boolean_option(tracer)
+    tracer = helper.get_tracer()
+    helper.add_lists_option(tracer)
+    helper.add_boolean_option(tracer)
 
     return tracer
+
 
 def generate_different_destination():
     return ['--diff_var', '1.0',
@@ -25,14 +27,16 @@ def generate_different_destination():
             '-r', '1.0',
             '--diff_var_long', '1.0']
 
+
 def assert_different_destination(args):
     assert args.dvar == 1.0
     assert args.dvar_short == 1.0
     assert args.dvar_both == 1.0
     assert args.dvar_long == 1.0
 
+
 @pytest.mark.usefixtures("cleandir")
 def test_dest():
     parser = tracer()
     with pytest.raises(RuntimeError):
-        test_search.add_different_destination(parser)
+        helper.add_different_destination(parser)
