@@ -83,9 +83,9 @@ def main():
 
     args = parser.parse_args()
 
-    setting_file_list = [f for f in glob.glob(os.path.expanduser(
-        os.path.join(args.lt_dir, "LT*LT/settings*.txt")))
-        if 'searchable' not in f]
+    setting_files_regex_path = os.path.expanduser(os.path.join(args.lt_dir, "LT*LT/settings*.txt"))
+    setting_file_list = [f for f in glob.glob(setting_files_regex_path)
+                         if 'searchable' not in f]
 
     if not setting_file_list:
         raise exception.NoHistory()
