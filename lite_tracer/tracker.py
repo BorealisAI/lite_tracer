@@ -89,7 +89,8 @@ class LTParser(ArgumentParser):
         git_diff = self._update_diff_hash(unclean_hash)
         untracked_files = self._update_untracked_hash(unclean_hash)
 
-        hash_text = self._HASH_FORMAT.format(unclean_hash, base_hash)
+        unclean_hash_str = self._hash_to_str(unclean_hash)
+        hash_text = self._HASH_FORMAT.format(unclean_hash_str, base_hash)
         setattr(args, self._HASH_FIELD, hash_text)
 
         # Check if Directories exist and error according to preference
@@ -199,7 +200,7 @@ class LTParser(ArgumentParser):
         content = list()
         for path in files:
             with open(path, 'rb') as file_handler:
-                content.append(file_handler.read())
+                content.append(file_handler.read().encode('utf-8'))
 
         return content
 
@@ -243,7 +244,7 @@ class LTParser(ArgumentParser):
         return self._hash_to_str(md5_hash, short)
 
     @staticmethod
-    def _hash_to_str(md5_hash, short):
+    def _hash_to_str(md5_hash, short=True):
         if not short:
             hash_code = md5_hash.hexdigest()
         else:
