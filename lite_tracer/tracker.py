@@ -172,7 +172,7 @@ class LTParser(ArgumentParser):
             self._folder_error_msg(folders)
 
         untracked_content = self._read_untracked_files(files)
-        md5_hash.update(''.join(untracked_content))
+        md5_hash.update(''.join(untracked_content).encode('utf-8'))
 
         return untracked_files
 
@@ -200,7 +200,7 @@ class LTParser(ArgumentParser):
         content = list()
         for path in files:
             with open(path, 'rb') as file_handler:
-                content.append(file_handler.read().encode('utf-8'))
+                content.append(file_handler.read())
 
         return content
 
