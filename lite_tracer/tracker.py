@@ -199,7 +199,7 @@ class LTParser(ArgumentParser):
     def _read_untracked_files(files):
         content = list()
         for path in files:
-            with open(path, 'rb') as file_handler:
+            with open(path, 'r') as file_handler:
                 content.append(file_handler.read())
 
         return content
