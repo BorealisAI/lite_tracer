@@ -1,22 +1,22 @@
+#!/usr/bin/python
 # Copyright (c) 2018-present, Royal Bank of Canada.
 # All rights reserved.
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.#
 # Author: Yanshuai Cao
 
-#!/usr/bin/python
 from __future__ import print_function
 import sys
-import subprocess
 import glob
 import os
-import sys
 import argparse
 import time
 import re
-import pdb
+
+from collections import defaultdict
 
 import lite_tracer.exceptions as exception
+
 
 class Parsed(object):
     def __init__(self, file_path, line):
@@ -47,8 +47,8 @@ class Parsed(object):
     # May cause problems with adding text notes
     def _clean_params(self, params):
         bad_chars = '[],\''
-        for c in bad_chars:
-            params = params.replace(c, '')
+        for char in bad_chars:
+            params = params.replace(char, '')
 
         return params
 
@@ -56,6 +56,7 @@ class Parsed(object):
         param_split = re.compile('[-]{1,2}[a-zA-Z].*?(?= [-]{1,2}[a-zA-Z]|$)')
         split_param_strs = re.findall(param_split, raw_param_str)
         return split_param_strs
+
 
 class FindDefault(object):
     def __init__(self):
@@ -66,8 +67,9 @@ class FindDefault(object):
         changed = [k for k, v in params.items()
                    if self.values.setdefault(k, v) != v]
 
-        if len(changed):
+        if changed:
             self.non_defaults |= set(changed)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -81,43 +83,48 @@ def main():
 
     args = parser.parse_args()
 
-    setting_file_list = [f for f in glob.glob(os.path.expanduser(
-                         os.path.join(args.lt_dir, "LT*LT/settings*.txt")))
+    setting_files_regex_path = os.path.expanduser(os.path.join(args.lt_dir, "LT*LT/settings*.txt"))
+    setting_file_list = [f for f in glob.glob(setting_files_regex_path)
                          if 'searchable' not in f]
 
     if not setting_file_list:
         raise exception.NoHistory()
 
-    include_search_params = get_param_value(args.include) if args.include else dict()
-    exclude_search_params = get_param_value(args.exclude) if args.exclude else dict()
+    include_params = get_param_operator_value(args.include) if args.include else defaultdict(list)
+    exclude_params = get_param_operator_value(args.exclude) if args.exclude else defaultdict(list)
 
-    if include_search_params is None and exclude_search_params is None:
+    if include_params is None and exclude_params is None:
         raise exception.NoParameterError()
 
     search_results = list()
     param_default_checker = FindDefault()
 
-    # Loop through all files and find include and exclude
     for file_path in setting_file_list:
-        with open(file_path, 'r') as f:
-            line = f.readline()
+        with open(file_path, 'r') as setting_file:
+            line = setting_file.readline()
 
             parsed = Parsed(file_path, line)
             parsed_params = parsed.kwargs
             param_default_checker.add(parsed_params)
 
-            include_search_result = include_search(parsed_params, include_search_params)
-            exclude_search_result = exclude_search(parsed_params, exclude_search_params)
+            include_search_result = compare_match(parsed_params, include_params)
+            include_found = all(include_search_result) and len(include_search_result) > 0
 
-            if include_search_result and not exclude_search_result:
+            exclude_search_result = compare_match(parsed_params, exclude_params, partial=True)
+            exclude_found = any(exclude_search_result)
+
+            # Include results when parameters are not part of the exclusion list AND
+            # parameters in -i option is found OR -i option is not set
+            if not exclude_found and (include_found or not include_params):
                 search_results.append(parsed)
 
-    if len(search_results) == 0:
+    if not search_results:
         raise exception.NoMatchError()
 
     search_results.sort(key=lambda x: x.ctime)
-    for r in search_results:
-        print(format_output(r, param_default_checker.non_defaults))
+    for result in search_results:
+        print(format_output(result, param_default_checker.non_defaults))
+
 
 def format_output(result, non_defaults):
     output_format = "{}\t{}\t{}"
@@ -132,63 +139,93 @@ def format_output(result, non_defaults):
 
     return output_format.format(result.hash_str, ctime, key_value_str)
 
-def include_search(stored_params, search_params):
-    # True if include term is found
 
-    stored_param_keys = set(stored_params.keys())
-    search_param_keys = set(search_params.keys())
+def get_param_operator_value(input_param_values):
+    """Returns dictionary{param:[(operator, value), ...], ...}"""
+    param_operator_value = defaultdict(list)
+    split_regex = re.compile(r'(^[a-zA-Z]{1}[\w-]*)(<=|>=|==|<|>|:)?(.*)?')
 
-    if not search_param_keys.issubset(stored_param_keys):
-        return False
-    else:
-        return all([match(stored_params, k, v)
-                    for k, v in search_params.items()])
+    for p_v in input_param_values:
+        p_v_matches = re.match(split_regex, p_v)
+        if p_v_matches is None:
+            raise exception.ArgumentNotParsable()
 
-def exclude_search(stored_params, search_params):
-    stored_param_keys = set(stored_params.keys())
-    search_param_keys = set(search_params.keys())
+        par_op_val = [m for m in p_v_matches.groups() if m]
 
-    if search_param_keys.isdisjoint(stored_param_keys):
-        return False
-    else:
-        return any([match(stored_params, k, v, True)
-                    for k, v in search_params.items()])
-
-def get_param_value(input_param_values):
-    param_value = dict()
-    for pv in input_param_values:
-        p_v = pv.split(':')
-
-        if len(p_v) > 1:
-            value = [':'.join(p_v[1:])]
+        param = par_op_val[0]
+        if len(par_op_val) == 3:
+            operator_value = (par_op_val[1], par_op_val[2])
+        elif len(par_op_val) == 1:
+            operator_value = ('', '')
         else:
-            value = [None]
+            raise exception.ArgumentNotParsable()
 
-        if param_value.get(p_v[0], None):
-            param_value[p_v[0]].extend(value)
+        param_operator_value[param].append(operator_value)
+
+    return param_operator_value
+
+
+def compare_match(stored_params, search_params, partial=False):
+    """Compares stored_param against search_params"""
+    stored_keys = set(stored_params.keys())
+    search_keys = set(search_params.keys())
+    possible_search_keys = search_keys.intersection(stored_keys)
+    results_list = list()
+
+    if not partial and possible_search_keys != search_keys:
+        return results_list
+
+    for search_key in possible_search_keys:
+        search_pattern = search_params[search_key]
+        stored_values = stored_params[search_key]
+        matches = (get_match_results(stored_values, pattern)
+                   for pattern in search_pattern)
+        if not partial:
+            results_list.append(all(matches))
         else:
-            param_value[p_v[0]] = value
+            results_list.append(any(matches))
 
-    return param_value
+    return results_list
 
-def match(stored_params, search_key, search_values, partial_search=False):
-    search_values = set(search_values)
-    stored_values = set(stored_params.get(search_key, [None]))
 
-    if search_key not in stored_params.keys():
-        return False
+def get_match_results(stored_values, pattern):
+    """ Return if any of the the stored params is matching the key """
+    operator = pattern[0]
+    raw_value = pattern[1]
+    numeric = is_numeric(raw_value)
+    cast = float if numeric else str
 
-    # key exists in params and look for partial or full match
-    if partial_search:
-        if None in search_values:
-            return True
+    value = cast(raw_value)
 
-        return bool(search_values & stored_values)
+    if raw_value and not numeric:
+        if operator == ':' or operator == '==':
+            return any(value == v for v in stored_values)
+        else:
+            return False
+
+    casted_values = (cast(v) for v in stored_values
+                     if is_numeric(v))
+
+    if operator == ':' or operator == '==':
+        return any(value == v for v in casted_values)
+    elif operator == '<=':
+        return any(value <= v for v in casted_values)
+    elif operator == '>=':
+        return any(value >= v for v in casted_values)
+    elif operator == '<':
+        return any(value < v for v in casted_values)
+    elif operator == '>':
+        return any(value > v for v in casted_values)
     else:
-        if None in search_values:
-            search_values.remove(None)
+        return True
 
-        return search_values.issubset(stored_values)
+
+def is_numeric(value):
+    try:
+        float(value)
+        return True
+    except ValueError:
+        return False
 
 
 if __name__ == '__main__':
