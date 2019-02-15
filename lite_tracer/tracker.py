@@ -226,7 +226,6 @@ class LTParser(ArgumentParser):
             os.makedirs(untracked_save_path)
 
         for u_file in untracked_files:
-            print(untracked_save_path, os.path.sep)
             if os.path.isdir(u_file):
                 dst_path = pjoin(untracked_save_path,
                                  os.path.basename(u_file.rstrip(os.path.sep)))
