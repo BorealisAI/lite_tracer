@@ -174,6 +174,7 @@ class LTParser(ArgumentParser):
         untracked_content = self._read_untracked_files(files)
         md5_hash.update(''.join(untracked_content).encode('utf-8'))
 
+        # find self._lt_record_dir and remove any content underneath
         return untracked_files
 
     def _find_untracked(self):
@@ -182,7 +183,9 @@ class LTParser(ArgumentParser):
         except RuntimeError:
             raise exception.GitError()
 
-        untracked_regex = re.compile(r'(?<=\?\? )(?!\.).*')
+        escaped_dir = re.escape(self._lt_record_dir + '/')
+        regex_string = '(?<=\?\? )(?!\.|{}).*'.format(escaped_dir)
+        untracked_regex = re.compile(regex_string)
         untracked_files = re.findall(untracked_regex, git_untracked)
 
         return untracked_files
